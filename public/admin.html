@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Varco — Admin</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="page">
+      <h1>Genera invito</h1>
+      <div class="card">
+        <form id="invite-form">
+          <div class="field">
+            <label for="label-input">Etichetta</label>
+            <input type="text" id="label-input" required placeholder="es. Mario" />
+          </div>
+          <div class="field">
+            <label for="max-files-input">Numero massimo di file</label>
+            <input type="number" id="max-files-input" min="1" value="1" required />
+          </div>
+          <div class="field">
+            <label for="ttl-input">Validità (ore)</label>
+            <input type="number" id="ttl-input" min="1" value="48" required />
+          </div>
+          <button id="submit-button" type="submit">Genera invito</button>
+        </form>
+        <p id="message" class="message"></p>
+      </div>
+
+      <div id="result-panel" class="card" hidden>
+        <div class="result-row">
+          <code id="invite-url"></code>
+          <button id="copy-url" class="secondary">Copia</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/admin.js"></script>
+  </body>
+</html>
