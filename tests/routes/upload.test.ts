@@ -3,6 +3,7 @@ import { createMockKv, type MockKv } from "../helpers/mockKv";
 import { uploadRoute } from "../../src/routes/upload";
 import type { Bindings } from "../../src/types";
 import { putInviteRecord, type InviteRecord } from "../../src/lib/kv";
+import { hashPassword } from "../../src/lib/crypto";
 
 function makeEnv(kv: MockKv): Bindings {
   return {
@@ -125,5 +126,6 @@ describe("POST /api/upload", () => {
     const record = await kv.get(`file:${token}`, "json");
     expect(record.filename).toBe("a.txt");
     expect(record.uploaderEmail).toBe("me@example.com");
+    expect(record.hash).toBe(await hashPassword(json.password, record.salt));
   });
 });
