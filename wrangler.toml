@@ -1,0 +1,19 @@
+name = "varco"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[kv_namespaces]]
+binding = "FILES_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[triggers]
+crons = ["0 3 * * *"]
+
+[vars]
+B2_BUCKET = "REPLACE_WITH_BUCKET_NAME"
+B2_ENDPOINT = "https://REPLACE_WITH_YOUR_ENDPOINT"
+B2_REGION = "REPLACE_WITH_REGION"
