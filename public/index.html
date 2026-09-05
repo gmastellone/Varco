@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Varco</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="page">
+      <h1>Varco</h1>
+      <div class="card">
+        <div id="dropzone" class="dropzone">Trascina un file qui, o clicca per selezionarlo</div>
+        <input type="file" id="file-input" hidden />
+
+        <div class="field" style="margin-top: 1rem">
+          <label for="expires-input">Scadenza (giorni)</label>
+          <input type="number" id="expires-input" value="7" min="1" />
+        </div>
+
+        <div class="field">
+          <label for="max-downloads-input">Numero massimo di download (opzionale)</label>
+          <input type="number" id="max-downloads-input" min="1" placeholder="illimitati" />
+        </div>
+
+        <button id="upload-button" disabled>Carica</button>
+        <progress id="progress-bar" value="0" max="100" hidden></progress>
+        <p id="message" class="message"></p>
+      </div>
+
+      <div id="result-panel" class="card" hidden>
+        <div class="result-row">
+          <code id="download-url"></code>
+          <button id="copy-link" class="secondary">Copia link</button>
+        </div>
+        <div class="result-row">
+          <code id="password"></code>
+          <button id="copy-password" class="secondary">Copia password</button>
+        </div>
+        <button id="copy-both">Copia entrambi</button>
+      </div>
+    </div>
+    <script type="module" src="/upload.js"></script>
+  </body>
+</html>
