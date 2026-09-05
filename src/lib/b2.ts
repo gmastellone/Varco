@@ -27,10 +27,12 @@ function client(config: B2Config): AwsClient {
     secretAccessKey: config.appKey,
     service: "s3",
     region: config.region,
-    // aws4fetch retries 500/429 responses with exponential backoff (default
-    // 10 retries, up to tens of seconds of sleep). That's both slow to test
-    // and risky inside a Worker's request budget, so we disable it here and
-    // let callers (routes, cron cleanup) decide whether to retry a failure.
+    // aws4fetch retries 500/429 responses with exponential backoff by
+    // default (10 retries, up to ~25s of cumulative sleep). That sleep is
+    // wall-clock latency, not Workers CPU time, but a request left hanging
+    // that long is still bad for a download/upload the client is waiting
+    // on. Fail fast instead; callers (routes, cron cleanup) can add their
+    // own bounded retry later if B2 turns out to need it in practice.
     retries: 0,
   });
 }
