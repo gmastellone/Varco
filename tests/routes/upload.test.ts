@@ -43,7 +43,7 @@ describe("POST /api/upload", () => {
       makeEnv(kv)
     );
     expect(res.status).toBe(200);
-    const json = await res.json();
+    const json = (await res.json()) as any;
     expect(json.downloadUrl).toMatch(/^\/d\/[0-9a-f]{64}$/);
     expect(json.password).toHaveLength(12);
     expect(json.uploadUrl).toContain("varco-test");
@@ -120,7 +120,7 @@ describe("POST /api/upload", () => {
       },
       makeEnv(kv)
     );
-    const json = await res.json();
+    const json = (await res.json()) as any;
     const token = json.downloadUrl.split("/").pop();
     const record = await kv.get(`file:${token}`, "json");
     expect(record.filename).toBe("a.txt");
