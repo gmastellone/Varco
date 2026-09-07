@@ -8,9 +8,9 @@ Tre percorsi, dal più automatico al più manuale. In tutti e tre restano comunq
 
 ### Opzione A — Deploy in un click, zero clone locale
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/<TUO-USER>/<TUO-REPO>)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/gmastellone/Varco)
 
-*(Sostituisci `<TUO-USER>/<TUO-REPO>` con il percorso reale della tua repo GitHub una volta pubblicata.)*
+*(Il bottone punta al branch di default della repo su GitHub — assicurati che sia quello che vuoi deployare, es. `main`, prima di condividerlo.)*
 
 Cliccando il bottone:
 1. Cloudflare ti chiede di autenticarti (o creare un account) e di **collegare/forkare questa repo** nel tuo account GitHub — è così che Cloudflare Workers Builds si aggancia per i deploy automatici sui push futuri.
