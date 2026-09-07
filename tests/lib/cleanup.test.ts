@@ -147,6 +147,52 @@ describe("cleanupOrphanedObjects", () => {
     expect(deleteCalls).toEqual([]);
   });
 
+  it("recognizes live files with special characters as live, not orphaned (raw key <-> percent-encoded/XML-escaped B2 report)", async () => {
+    const kv = createMockKv();
+    // One filename that needs URL percent-encoding (space + accented
+    // letter), one that needs XML entity-unescaping ("&"). record.key
+    // holds the raw filename in both cases; the mocked ListObjectsV2
+    // response reports what B2 would actually send on the wire: the
+    // percent-encoded segment is decoded once by B2's own HTTP layer back
+    // to raw UTF-8 (so <Key> is raw for that one), while "&" must be
+    // XML-entity-escaped inside the XML itself.
+    await putFileRecord(
+      kv as unknown as KVNamespace,
+      "tok1",
+      makeRecord({ key: "f/2026/09/a/città file.pdf", filename: "città file.pdf" }),
+      86400
+    );
+    await putFileRecord(
+      kv as unknown as KVNamespace,
+      "tok2",
+      makeRecord({ key: "f/2026/09/b/R&D report.pdf", filename: "R&D report.pdf" }),
+      86400
+    );
+
+    const listXml =
+      '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
+      "<Contents><Key>f/2026/09/a/città file.pdf</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents>" +
+      "<Contents><Key>f/2026/09/b/R&amp;D report.pdf</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
+
+    const deleteCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { url, method } = requestInfo(input, init);
+        if (method === "DELETE") {
+          deleteCalls.push(url);
+          return new Response(null, { status: 204 });
+        }
+        return new Response(listXml, { status: 200 });
+      })
+    );
+
+    const result = await cleanupOrphanedObjects(makeEnv(kv));
+
+    expect(result.deleted).toEqual([]);
+    expect(deleteCalls).toEqual([]);
+  });
+
   it("does not trip the sanity valve when both KV and B2 are genuinely empty", async () => {
     const kv = createMockKv(); // no records ever written
 

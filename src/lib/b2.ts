@@ -87,6 +87,34 @@ export interface B2ObjectInfo {
   lastModified: Date;
 }
 
+// B2's ListObjectsV2 response is XML, so element text is XML-entity-escaped
+// (a literal "&" in a key is transmitted as "&amp;", "<" as "&lt;", etc).
+// record.key (as stored in KV) holds the raw, unescaped filename, so a
+// <Key> must be unescaped back to raw text here for it to string-match
+// record.key — otherwise the cron cleanup would permanently treat a live
+// file whose name contains one of these characters as orphaned. Each
+// entity is replaced independently in one pass (not chained), so an
+// already-unescaped "&" produced by e.g. the "&amp;" replacement is never
+// re-matched by a later replacement in the same pass.
+function unescapeXmlEntities(text: string): string {
+  return text.replace(/&amp;|&lt;|&gt;|&quot;|&#39;/g, (entity) => {
+    switch (entity) {
+      case "&amp;":
+        return "&";
+      case "&lt;":
+        return "<";
+      case "&gt;":
+        return ">";
+      case "&quot;":
+        return '"';
+      case "&#39;":
+        return "'";
+      default:
+        return entity;
+    }
+  });
+}
+
 export async function listObjects(config: B2Config, prefix: string): Promise<B2ObjectInfo[]> {
   const objects: B2ObjectInfo[] = [];
   let continuationToken: string | undefined;
@@ -112,7 +140,7 @@ export async function listObjects(config: B2Config, prefix: string): Promise<B2O
       if (!keyMatch) continue;
       const lastModifiedMatch = block.match(/<LastModified>([^<]*)<\/LastModified>/);
       objects.push({
-        key: keyMatch[1],
+        key: unescapeXmlEntities(keyMatch[1]),
         lastModified: new Date(lastModifiedMatch ? lastModifiedMatch[1] : 0),
       });
     }

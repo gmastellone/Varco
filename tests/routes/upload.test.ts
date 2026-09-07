@@ -150,6 +150,39 @@ describe("POST /api/upload", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects a filename that is exactly a single dot", async () => {
+    // encodeURIComponent(".") === "." — when the raw key is turned into a
+    // request URL, the WHATWG URL constructor's dot-segment normalization
+    // collapses a trailing "/." segment away, so this filename must be
+    // rejected at validation time rather than allowed to reach objectKey().
+    const res = await uploadRoute.request(
+      "/api/upload",
+      {
+        method: "POST",
+        headers: { "Cf-Access-Authenticated-User-Email": "me@example.com" },
+        body: JSON.stringify({ filename: ".", size: 10, expiresInDays: 7 }),
+      },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a filename that is exactly a double dot", async () => {
+    // encodeURIComponent("..") === ".." — dot-segment normalization would
+    // resolve a trailing "/.." UP a level to the shared f/<year>/<month>/
+    // prefix, colliding with every other upload from the same month.
+    const res = await uploadRoute.request(
+      "/api/upload",
+      {
+        method: "POST",
+        headers: { "Cf-Access-Authenticated-User-Email": "me@example.com" },
+        body: JSON.stringify({ filename: "..", size: 10, expiresInDays: 7 }),
+      },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(400);
+  });
+
   it("accepts a filename with characters that need URL-encoding and scopes the key under f/", async () => {
     const res = await uploadRoute.request(
       "/api/upload",

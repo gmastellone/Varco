@@ -22,8 +22,23 @@ interface UploadRequestBody {
 // reports (raw UTF-8 keys), which is what the cron cleanup compares against.
 const UNSAFE_FILENAME_CHARS = /[/\\\x00-\x1f]/;
 
+// A filename of exactly "." or ".." is otherwise indistinguishable from a
+// normal filename to UNSAFE_FILENAME_CHARS, but the WHATWG URL constructor
+// applies dot-segment path normalization when objectUrl() builds the
+// request URL: a trailing "/." segment collapses away, and a trailing "/.."
+// segment resolves UP a level to the shared f/<year>/<month>/ prefix — the
+// same prefix every other upload from that month lands under, regardless of
+// fileId. That lets two uploads named ".." collide (the second overwrites
+// the first in B2), and either case also breaks the record.key <->
+// listObjects() match the cron cleanup relies on. Reject both outright.
+const RESERVED_DOT_SEGMENTS = new Set([".", ".."]);
+
 function isValidFilename(filename: string): boolean {
-  return filename.trim().length > 0 && !UNSAFE_FILENAME_CHARS.test(filename);
+  return (
+    filename.trim().length > 0 &&
+    !UNSAFE_FILENAME_CHARS.test(filename) &&
+    !RESERVED_DOT_SEGMENTS.has(filename)
+  );
 }
 
 function isValidUploadBody(body: unknown): body is UploadRequestBody {

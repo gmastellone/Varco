@@ -128,6 +128,25 @@ describe("fetchObject / deleteObject / listObjects", () => {
     expect(objects[1].lastModified).toEqual(new Date("2026-02-02T00:00:00.000Z"));
   });
 
+  it("listObjects unescapes XML entities in <Key> so it matches the raw filename in record.key", async () => {
+    // A literal "&" in a filename is transmitted by B2 as "&amp;" inside the
+    // XML element text (standard XML entity-escaping). If listObjects()
+    // returned that text verbatim, it would never string-match the raw
+    // "&" stored in record.key, and the cron cleanup would permanently
+    // misclassify a live "R&D report.pdf" as orphaned.
+    const xml =
+      '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
+      "<Contents><Key>f/2026/09/a/R&amp;D report.pdf</Key><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents>" +
+      "<Contents><Key>f/2026/09/b/&lt;tag&gt; &quot;quoted&quot; &#39;s&#39;.txt</Key><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(xml, { status: 200 })));
+
+    const objects = await listObjects(config, "f/");
+    expect(objects.map((o) => o.key)).toEqual([
+      "f/2026/09/a/R&D report.pdf",
+      "f/2026/09/b/<tag> \"quoted\" 's'.txt",
+    ]);
+  });
+
   it("listObjects follows pagination via the continuation token", async () => {
     const page1 =
       '<?xml version="1.0"?><ListBucketResult><IsTruncated>true</IsTruncated>' +
