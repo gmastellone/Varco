@@ -38,11 +38,19 @@ function errorPage(token: string, message: string): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Varco — Scarica file</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <div class="page">
-      <h1>Scarica file</h1>
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9 6 L4 6 L4 26 L9 26" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M23 6 L28 6 L28 26 L23 26" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="14.5" y="11" width="3" height="10" rx="1.5" fill="var(--color-accent)" />
+        </svg>
+        <h1>Scarica file</h1>
+      </div>
       <div class="card">
         <p class="message error">${message}</p>
         <a href="${retryHref}">Riprova</a>
