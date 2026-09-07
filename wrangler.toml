@@ -2,6 +2,25 @@ name = "varco"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
+# Disabilita la route di default *.workers.dev. Quella route non è mai dietro
+# Cloudflare Access (che si lega a un hostname di una zona Cloudflare che
+# controlli, non all'URL di default), quindi lasciarla attiva rende l'intero
+# modello di autenticazione aggirabile: chiunque trovi l'URL workers.dev può
+# forgiare l'header Cf-Access-Authenticated-User-Email e caricare file o
+# generare inviti. Vedi README, sezione "6. Cloudflare Access (Zero Trust)".
+#
+# ATTENZIONE: con workers_dev = false e nessuna route configurata qui sotto,
+# il Worker non è raggiungibile da NESSUN URL. Decommenta e compila il blocco
+# [[routes]] con un dominio/sottodominio che possiedi in una zona Cloudflare
+# prima del deploy, altrimenti il deploy riesce ma il servizio è inaccessibile.
+workers_dev = false
+
+# Esempio: lega il Worker a un dominio custom che controlli (richiede che il
+# dominio/sottodominio sia già gestito come zona da Cloudflare).
+# [[routes]]
+# pattern = "varco.tuodominio.com/*"
+# custom_domain = true
+
 [assets]
 directory = "./public"
 binding = "ASSETS"

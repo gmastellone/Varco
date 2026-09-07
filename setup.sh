@@ -94,4 +94,9 @@ fi
 
 info "Passi manuali rimanenti (non automatizzabili da qui):"
 echo "  - Cloudflare Access (Zero Trust) su /admin, /api/invite, /api/upload — vedi README punto 6."
+echo "  - Dominio custom per il Worker (prerequisito perché Access protegga qualcosa: l'URL"
+echo "    *.workers.dev di default NON è protetto da Access) — decommenta e compila [[routes]]"
+echo "    in wrangler.toml, poi rilancia il deploy. Vedi README punto 6."
 echo "  - SSE-B2 e lifecycle rule sul bucket B2, se non ancora fatto — vedi README punto 1."
+echo "  - CORS Rules sul bucket B2 per l'origine del Worker (altrimenti l'upload dal browser"
+echo "    fallisce in preflight) — vedi README punto 1."

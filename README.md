@@ -18,6 +18,8 @@ Cliccando il bottone:
 3. Dovrebbe proporti la creazione del KV namespace dichiarato in `[[kv_namespaces]]` come parte del flusso guidato. Se non lo fa, crealo tu (`npx wrangler kv namespace create FILES_KV` da locale, oppure via `./setup.sh`, oppure a mano dal dashboard) e incolla l'id in `wrangler.toml` prima di rilanciare il deploy.
 4. Esegue il deploy.
 
+**Attenzione — questo flusso da solo NON è sicuro.** Un deploy fatto così è raggiungibile solo sull'URL di default `*.workers.dev`, e come spiegato al punto 6 quell'URL non è protetto da Cloudflare Access in nessun modo: chiunque lo trovi può forgiare l'header `Cf-Access-Authenticated-User-Email` e caricare file o generare inviti aggirando completamente l'autenticazione. Non considerare il deploy pronto all'uso finché non colleghi un dominio/sottodominio che controlli (compila il blocco `[[routes]]` in `wrangler.toml`, che ha già `workers_dev = false`, e rilancia il deploy) — vedi il prerequisito descritto al punto 6.
+
 **Dopo il deploy**, aggiungi i due valori sensibili — impossibile farlo dentro il flusso del bottone, perché i secret non vivono mai in `wrangler.toml`: vai su dashboard Cloudflare → Workers & Pages → il tuo worker → **Settings → Variables and Secrets → Add variable**, tipo **Encrypted**, per `B2_KEY_ID` e `B2_APP_KEY`. Poi configura Cloudflare Access (punto 6). Zero terminale in tutto questo percorso.
 
 ### Opzione B — `setup.sh`, bootstrap locale guidato
@@ -35,6 +37,11 @@ La sezione seguente descrive ogni passo a mano, per chi preferisce non usare né
 3. Aggiungi una **Lifecycle Rule** come rete di sicurezza (il cron del Worker cancella già gli oggetti orfani, questa regola è un backstop):
    - "Keep only the last version of the file" con **"days after uploading"** impostato a qualche giorno oltre alla scadenza massima che offri (es. se offri fino a 30 giorni di scadenza, imposta la lifecycle rule a 35-40 giorni), così un oggetto che sfugge al cron viene comunque rimosso da B2 stessa.
 4. Annota l'**endpoint S3** del bucket (es. `https://s3.us-west-004.backblazeb2.com`) e la **region** (es. `us-west-004`) — visibili nella pagina dei dettagli del bucket.
+5. Configura le **CORS Rules** del bucket (Bucket Settings → CORS Rules nel pannello B2). L'upload avviene con una `PUT` cross-origin fatta direttamente dal browser a B2 (vedi "Come funziona" più sotto): una `PUT` con body non è mai una "simple request", quindi il browser la precede sempre con una preflight `OPTIONS`. Un bucket B2 di default non ha regole CORS, quindi la preflight fallisce e ogni upload viene bloccato dal browser finché non aggiungi una regola che permetta l'origine del Worker deployato (lo stesso dominio custom del punto 6, es. `https://varco.tuodominio.com`), con:
+   - **Allowed Operations**: `s3_put` (e opzionalmente `s3_head`; `s3_get` non serve, perché i download passano sempre dal Worker in streaming e mai direttamente da B2).
+   - **Allowed Headers**: `content-type`.
+
+   In alternativa alla console, la stessa regola si può impostare via `b2` CLI (`b2 bucket update --cors-rules '[...]' <nome-bucket> allPrivate`) o via una chiamata API S3-compatibile.
 
 ### 2. Application Key B2 (S3-compatible)
 
@@ -68,6 +75,8 @@ npx wrangler secret put B2_APP_KEY
 ```
 
 ### 6. Cloudflare Access (Zero Trust)
+
+**Prerequisito obbligatorio: un dominio custom.** Cloudflare Access si lega a un hostname dentro una zona Cloudflare che controlli — non protegge in alcun modo l'URL di default `<worker>.<tuo-subdomain>.workers.dev` che ogni Worker riceve automaticamente. `wrangler.toml` imposta già `workers_dev = false` per disabilitare quella route di default, ma finché non ne configuri una reale il Worker non è raggiungibile da nessun URL. Prima di creare le applicazioni Access qui sotto: decommenta e compila il blocco `[[routes]]` in `wrangler.toml` con un dominio o sottodominio che possiedi in una zona Cloudflare (es. `varco.tuodominio.com`), poi rilancia il deploy. Solo dopo questo passo le policy Access descritte sotto proteggono effettivamente qualcosa — senza un dominio custom, chiunque trovasse l'URL workers.dev potrebbe forgiare l'header `Cf-Access-Authenticated-User-Email` e caricare file o generare inviti aggirando completamente l'autenticazione.
 
 Nel dashboard Cloudflare Zero Trust → Access → Applications, crea due applicazioni **self-hosted** puntate al dominio del Worker:
 
