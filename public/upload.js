@@ -16,6 +16,7 @@ export function buildShareText(downloadUrl, password) {
 
 function initUploadPage() {
   const dropzone = document.getElementById("dropzone");
+  const dzText = document.getElementById("dz-text");
   const fileInput = document.getElementById("file-input");
   const expiresInput = document.getElementById("expires-input");
   const maxDownloadsInput = document.getElementById("max-downloads-input");
@@ -39,7 +40,7 @@ function initUploadPage() {
 
   function selectFile(file) {
     selectedFile = file;
-    dropzone.textContent = `${file.name} (${formatBytes(file.size)})`;
+    dzText.textContent = `${file.name} (${formatBytes(file.size)})`;
     uploadButton.disabled = false;
   }
 
