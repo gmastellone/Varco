@@ -103,6 +103,10 @@ export async function incrementFailCount(kv: KVNamespace, token: string): Promis
   return next;
 }
 
+export async function resetFailCount(kv: KVNamespace, token: string): Promise<void> {
+  await kv.delete(failKvKey(token));
+}
+
 export async function listAllFileRecords(kv: KVNamespace): Promise<FileRecord[]> {
   const records: FileRecord[] = [];
   let cursor: string | undefined;

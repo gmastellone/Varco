@@ -11,12 +11,25 @@ interface UploadRequestBody {
   maxDownloads?: number;
 }
 
+// Rejects path separators and control characters so a filename can never be
+// used to escape the `f/` prefix of the B2 object key (which would make the
+// object invisible to the cron cleanup's `prefix: "f/"` listing). Also
+// rejects empty or whitespace-only names. `#`/`?`, which could otherwise
+// truncate/reinterpret the key, are handled by the encodeURIComponent()
+// call in objectKey() below (defense in depth).
+const UNSAFE_FILENAME_CHARS = /[/\\\x00-\x1f]/;
+
+function isValidFilename(filename: string): boolean {
+  return filename.trim().length > 0 && !UNSAFE_FILENAME_CHARS.test(filename);
+}
+
 function isValidUploadBody(body: unknown): body is UploadRequestBody {
   if (typeof body !== "object" || body === null) return false;
   const b = body as Record<string, unknown>;
   return (
     typeof b.filename === "string" &&
     b.filename.length > 0 &&
+    isValidFilename(b.filename) &&
     typeof b.size === "number" &&
     b.size > 0 &&
     typeof b.expiresInDays === "number" &&
@@ -29,7 +42,11 @@ function objectKey(fileId: string, filename: string): string {
   const now = new Date();
   const year = now.getUTCFullYear();
   const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-  return `f/${year}/${month}/${fileId}/${filename}`;
+  // Defense in depth: even though isValidUploadBody already rejects path
+  // separators and control characters, encode the filename before it goes
+  // into the object key so a future validation gap can't produce a key
+  // outside the `f/` prefix.
+  return `f/${year}/${month}/${fileId}/${encodeURIComponent(filename)}`;
 }
 
 export const uploadRoute = new Hono<{ Bindings: Bindings }>();

@@ -1,10 +1,82 @@
 import { Hono } from "hono";
 import type { Bindings } from "../types";
-import { getFileRecord, incrementDownloadCount, getFailCount, incrementFailCount } from "../lib/kv";
+import {
+  getFileRecord,
+  incrementDownloadCount,
+  getFailCount,
+  incrementFailCount,
+  resetFailCount,
+} from "../lib/kv";
 import { hashPassword, constantTimeEqual } from "../lib/crypto";
 import { fetchObject, b2ConfigFromEnv } from "../lib/b2";
 
 const MAX_FAILED_ATTEMPTS = 5;
+
+// Small HTML error pages for the POST /d/:token error branches. Now that the
+// download page (public/download.html) submits as a real form navigation
+// with no JS in the loop, a non-2xx response here becomes the page the
+// browser actually displays, not JSON consumed by fetch(), so it needs to be
+// a page in the project's existing style, with a way back to retry.
+//
+// Security note: the 404 branch below is reached both for "token doesn't
+// exist" and "wrong password on a real token" (see the no-oracle comment
+// further down), and both call this same function with the same message —
+// that indistinguishability must be preserved by any future edit here.
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function errorPage(token: string, message: string): string {
+  const retryHref = `/d/${escapeHtmlAttr(token)}`;
+  return `<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Varco — Scarica file</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="page">
+      <h1>Scarica file</h1>
+      <div class="card">
+        <p class="message error">${message}</p>
+        <a href="${retryHref}">Riprova</a>
+      </div>
+    </div>
+  </body>
+</html>`;
+}
+
+// Builds a Content-Disposition header that survives non-ASCII filenames.
+// Plain interpolation of the raw filename is emitted as raw UTF-8 bytes,
+// which browsers then decode as ISO-8859-1 (mojibake, e.g. "città.pdf" ->
+// "cittÃ .pdf") and which workerd logs a runtime error for. filename* per
+// RFC 5987 is what modern browsers actually use for the real name; filename=
+// is just a same-request-cycle-safe ASCII fallback for older clients, so it
+// only needs to be a valid header value, not pretty.
+function asciiFallbackFilename(filename: string): string {
+  const stripped = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  return stripped.trim().length > 0 ? stripped : "download";
+}
+
+function rfc5987Encode(value: string): string {
+  // encodeURIComponent leaves `' ( ) *` unescaped, which RFC 5987's
+  // attr-char grammar does not permit — percent-encode those too.
+  return encodeURIComponent(value).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
+
+function contentDispositionHeader(filename: string): string {
+  const fallback = asciiFallbackFilename(filename);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${rfc5987Encode(filename)}`;
+}
 
 export const downloadRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -17,11 +89,15 @@ downloadRoute.post("/d/:token", async (c) => {
 
   const failCount = await getFailCount(c.env.FILES_KV, token);
   if (failCount >= MAX_FAILED_ATTEMPTS) {
-    return c.json({ error: "too many attempts" }, 429);
+    return c.html(errorPage(token, "Troppi tentativi. Riprova più tardi."), 429);
   }
 
   const record = await getFileRecord(c.env.FILES_KV, token);
-  const body = await c.req.json().catch(() => null);
+  // The download page now submits as a plain HTML form POST (native
+  // navigation, so the browser can stream the response straight to disk
+  // instead of buffering it in JS) rather than a JS fetch() with a JSON
+  // body, so the body arrives as application/x-www-form-urlencoded.
+  const body = await c.req.parseBody().catch(() => null);
   const password = typeof body?.password === "string" ? body.password : "";
 
   // Always hash, even for a nonexistent token (using a fixed dummy salt), so
@@ -42,28 +118,35 @@ downloadRoute.post("/d/:token", async (c) => {
     // subsequent request, once the count has reached the threshold, sees
     // the lockout response.
     await incrementFailCount(c.env.FILES_KV, token);
-    return c.json({ error: "not found" }, 404);
+    return c.html(errorPage(token, "Password errata o link non valido."), 404);
   }
 
   const isExpired = record.expiresAt <= Date.now();
   const isExhausted = record.maxDownloads !== undefined && record.downloadCount >= record.maxDownloads;
   if (isExpired || isExhausted) {
-    return c.json({ error: "gone" }, 410);
+    return c.html(errorPage(token, "Questo link non è più disponibile."), 410);
   }
 
   const b2Response = await fetchObject(b2ConfigFromEnv(c.env), record.key);
   if (!b2Response.ok || !b2Response.body) {
-    return c.json({ error: "not found" }, 404);
+    return c.html(errorPage(token, "Password errata o link non valido."), 404);
   }
 
-  c.executionCtx.waitUntil(incrementDownloadCount(c.env.FILES_KV, token, record));
+  c.executionCtx.waitUntil(
+    Promise.all([incrementDownloadCount(c.env.FILES_KV, token, record), resetFailCount(c.env.FILES_KV, token)])
+  );
+
+  const headers: Record<string, string> = {
+    "Content-Disposition": contentDispositionHeader(record.filename),
+    "Content-Type": "application/octet-stream",
+  };
+  const contentLength = b2Response.headers.get("Content-Length");
+  if (contentLength) {
+    headers["Content-Length"] = contentLength;
+  }
 
   return new Response(b2Response.body, {
     status: 200,
-    headers: {
-      "Content-Disposition": `attachment; filename="${record.filename.replace(/"/g, "")}"`,
-      "Content-Length": b2Response.headers.get("Content-Length") ?? "",
-      "Content-Type": "application/octet-stream",
-    },
+    headers,
   });
 });

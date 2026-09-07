@@ -111,6 +111,66 @@ describe("POST /api/upload", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects a filename that attempts to escape the f/ prefix via path traversal", async () => {
+    const res = await uploadRoute.request(
+      "/api/upload",
+      {
+        method: "POST",
+        headers: { "Cf-Access-Authenticated-User-Email": "me@example.com" },
+        body: JSON.stringify({ filename: "../../../escape.bin", size: 10, expiresInDays: 7 }),
+      },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a filename containing a backslash", async () => {
+    const res = await uploadRoute.request(
+      "/api/upload",
+      {
+        method: "POST",
+        headers: { "Cf-Access-Authenticated-User-Email": "me@example.com" },
+        body: JSON.stringify({ filename: "a\\b.txt", size: 10, expiresInDays: 7 }),
+      },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a whitespace-only filename", async () => {
+    const res = await uploadRoute.request(
+      "/api/upload",
+      {
+        method: "POST",
+        headers: { "Cf-Access-Authenticated-User-Email": "me@example.com" },
+        body: JSON.stringify({ filename: "   ", size: 10, expiresInDays: 7 }),
+      },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts a filename with characters that need URL-encoding and scopes the key under f/", async () => {
+    const res = await uploadRoute.request(
+      "/api/upload",
+      {
+        method: "POST",
+        headers: { "Cf-Access-Authenticated-User-Email": "me@example.com" },
+        body: JSON.stringify({ filename: "my file #1.txt", size: 10, expiresInDays: 7 }),
+      },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const token = json.downloadUrl.split("/").pop();
+    const record = await kv.get(`file:${token}`, "json");
+    expect(record.filename).toBe("my file #1.txt");
+    expect(record.key.startsWith("f/")).toBe(true);
+    expect(record.key).toContain(encodeURIComponent("my file #1.txt"));
+    expect(record.key).not.toContain(" ");
+    expect(record.key).not.toContain("#");
+  });
+
   it("stores a file record whose hash matches the returned password", async () => {
     const res = await uploadRoute.request(
       "/api/upload",

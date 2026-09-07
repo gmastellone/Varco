@@ -10,16 +10,14 @@
     <div class="page">
       <h1>Scarica file</h1>
       <div class="card">
-        <form id="download-form">
+        <form method="POST" action="">
           <div class="field">
             <label for="password-input">Password</label>
-            <input type="password" id="password-input" required autofocus />
+            <input type="password" id="password-input" name="password" required autofocus />
           </div>
-          <button id="submit-button" type="submit">Scarica</button>
+          <button type="submit">Scarica</button>
         </form>
-        <p id="message" class="message"></p>
       </div>
     </div>
-    <script type="module" src="/download.js"></script>
   </body>
 </html>
