@@ -51,8 +51,8 @@ describe("cleanupOrphanedObjects", () => {
 
     const listXml =
       '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
-      "<Contents><Key>f/2026/09/a/keep.bin</Key></Contents>" +
-      "<Contents><Key>f/2026/09/b/orphan.bin</Key></Contents></ListBucketResult>";
+      "<Contents><Key>f/2026/09/a/keep.bin</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents>" +
+      "<Contents><Key>f/2026/09/b/orphan.bin</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
 
     const deleteCalls: string[] = [];
     vi.stubGlobal(
@@ -80,7 +80,78 @@ describe("cleanupOrphanedObjects", () => {
 
     const listXml =
       '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
-      "<Contents><Key>f/2026/09/a/keep.bin</Key></Contents></ListBucketResult>";
+      "<Contents><Key>f/2026/09/a/keep.bin</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(listXml, { status: 200 })));
+
+    const result = await cleanupOrphanedObjects(makeEnv(kv));
+    expect(result.deleted).toEqual([]);
+  });
+
+  it("does not delete an orphaned object younger than the 1-hour minimum age", async () => {
+    const kv = createMockKv();
+    // No live records at all, but we still want the sanity valve (zero live
+    // records + objects present) to NOT be the reason nothing is deleted —
+    // so give it one live record to keep that guard from tripping, and
+    // isolate the min-age behavior under test.
+    await putFileRecord(kv as unknown as KVNamespace, "tok1", makeRecord({ key: "f/2026/09/a/keep.bin" }), 86400);
+
+    const recentIso = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 minutes ago
+    const listXml =
+      '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
+      `<Contents><Key>f/2026/09/a/keep.bin</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents>` +
+      `<Contents><Key>f/2026/09/b/fresh-orphan.bin</Key><LastModified>${recentIso}</LastModified></Contents></ListBucketResult>`;
+
+    const deleteCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { url, method } = requestInfo(input, init);
+        if (method === "DELETE") {
+          deleteCalls.push(url);
+          return new Response(null, { status: 204 });
+        }
+        return new Response(listXml, { status: 200 });
+      })
+    );
+
+    const result = await cleanupOrphanedObjects(makeEnv(kv));
+
+    expect(result.deleted).toEqual([]);
+    expect(deleteCalls.some((u) => u.includes("fresh-orphan.bin"))).toBe(false);
+  });
+
+  it("skips all deletions when KV has zero live records but B2 has objects (sanity valve)", async () => {
+    const kv = createMockKv(); // no records ever written
+
+    const listXml =
+      '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
+      "<Contents><Key>f/2026/09/a/one.bin</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents>" +
+      "<Contents><Key>f/2026/09/b/two.bin</Key><LastModified>2020-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
+
+    const deleteCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { url, method } = requestInfo(input, init);
+        if (method === "DELETE") {
+          deleteCalls.push(url);
+          return new Response(null, { status: 204 });
+        }
+        return new Response(listXml, { status: 200 });
+      })
+    );
+
+    const result = await cleanupOrphanedObjects(makeEnv(kv));
+
+    expect(result.deleted).toEqual([]);
+    expect(deleteCalls).toEqual([]);
+  });
+
+  it("does not trip the sanity valve when both KV and B2 are genuinely empty", async () => {
+    const kv = createMockKv(); // no records ever written
+
+    const listXml =
+      '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>';
     vi.stubGlobal("fetch", vi.fn(async () => new Response(listXml, { status: 200 })));
 
     const result = await cleanupOrphanedObjects(makeEnv(kv));

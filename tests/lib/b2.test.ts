@@ -3,7 +3,7 @@ import {
   presignPutUrl,
   fetchObject,
   deleteObject,
-  listObjectKeys,
+  listObjects,
   b2ConfigFromEnv,
   type B2Config,
 } from "../../src/lib/b2";
@@ -63,7 +63,7 @@ describe("presignPutUrl", () => {
   });
 });
 
-describe("fetchObject / deleteObject / listObjectKeys", () => {
+describe("fetchObject / deleteObject / listObjects", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -92,25 +92,27 @@ describe("fetchObject / deleteObject / listObjectKeys", () => {
     await expect(deleteObject(config, "f/2026/09/abc/report.pdf")).rejects.toThrow();
   });
 
-  it("listObjectKeys parses keys from a single-page XML response", async () => {
+  it("listObjects parses keys and lastModified from a single-page XML response", async () => {
     const xml =
       '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
-      "<Contents><Key>f/2026/09/a/one.pdf</Key></Contents>" +
-      "<Contents><Key>f/2026/09/b/two.pdf</Key></Contents></ListBucketResult>";
+      "<Contents><Key>f/2026/09/a/one.pdf</Key><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents>" +
+      "<Contents><Key>f/2026/09/b/two.pdf</Key><LastModified>2026-02-02T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
     vi.stubGlobal("fetch", vi.fn(async () => new Response(xml, { status: 200 })));
 
-    const keys = await listObjectKeys(config, "f/");
-    expect(keys).toEqual(["f/2026/09/a/one.pdf", "f/2026/09/b/two.pdf"]);
+    const objects = await listObjects(config, "f/");
+    expect(objects.map((o) => o.key)).toEqual(["f/2026/09/a/one.pdf", "f/2026/09/b/two.pdf"]);
+    expect(objects[0].lastModified).toEqual(new Date("2026-01-01T00:00:00.000Z"));
+    expect(objects[1].lastModified).toEqual(new Date("2026-02-02T00:00:00.000Z"));
   });
 
-  it("listObjectKeys follows pagination via the continuation token", async () => {
+  it("listObjects follows pagination via the continuation token", async () => {
     const page1 =
       '<?xml version="1.0"?><ListBucketResult><IsTruncated>true</IsTruncated>' +
       "<NextContinuationToken>tok1</NextContinuationToken>" +
-      "<Contents><Key>f/a</Key></Contents></ListBucketResult>";
+      "<Contents><Key>f/a</Key><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
     const page2 =
       '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
-      "<Contents><Key>f/b</Key></Contents></ListBucketResult>";
+      "<Contents><Key>f/b</Key><LastModified>2026-01-02T00:00:00.000Z</LastModified></Contents></ListBucketResult>";
     let call = 0;
     vi.stubGlobal(
       "fetch",
@@ -120,8 +122,22 @@ describe("fetchObject / deleteObject / listObjectKeys", () => {
       })
     );
 
-    const keys = await listObjectKeys(config, "f/");
-    expect(keys).toEqual(["f/a", "f/b"]);
+    const objects = await listObjects(config, "f/");
+    expect(objects.map((o) => o.key)).toEqual(["f/a", "f/b"]);
     expect(call).toBe(2);
+  });
+
+  it("pairs each key with its own LastModified even when values differ per entry", async () => {
+    const xml =
+      '<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>' +
+      "<Contents><Key>f/older.bin</Key><LastModified>2020-05-05T05:05:05.000Z</LastModified></Contents>" +
+      "<Contents><Key>f/newer.bin</Key><LastModified>2026-09-07T09:00:00.000Z</LastModified></Contents></ListBucketResult>";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(xml, { status: 200 })));
+
+    const objects = await listObjects(config, "f/");
+    const older = objects.find((o) => o.key === "f/older.bin");
+    const newer = objects.find((o) => o.key === "f/newer.bin");
+    expect(older?.lastModified).toEqual(new Date("2020-05-05T05:05:05.000Z"));
+    expect(newer?.lastModified).toEqual(new Date("2026-09-07T09:00:00.000Z"));
   });
 });

@@ -69,8 +69,13 @@ export async function deleteObject(config: B2Config, key: string): Promise<void>
   }
 }
 
-export async function listObjectKeys(config: B2Config, prefix: string): Promise<string[]> {
-  const keys: string[] = [];
+export interface B2ObjectInfo {
+  key: string;
+  lastModified: Date;
+}
+
+export async function listObjects(config: B2Config, prefix: string): Promise<B2ObjectInfo[]> {
+  const objects: B2ObjectInfo[] = [];
   let continuationToken: string | undefined;
 
   do {
@@ -84,13 +89,24 @@ export async function listObjectKeys(config: B2Config, prefix: string): Promise<
       throw new Error(`B2 list failed: ${response.status}`);
     }
     const xml = await response.text();
-    for (const match of xml.matchAll(/<Key>([^<]*)<\/Key>/g)) {
-      keys.push(match[1]);
+    // Each object's metadata (Key, LastModified, ...) lives inside its own
+    // <Contents> block. Match blocks first, then extract fields from within
+    // each one, so a key is never paired with a neighboring entry's
+    // LastModified (which a flat whole-document regex scan would risk).
+    for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const block = match[1];
+      const keyMatch = block.match(/<Key>([^<]*)<\/Key>/);
+      if (!keyMatch) continue;
+      const lastModifiedMatch = block.match(/<LastModified>([^<]*)<\/LastModified>/);
+      objects.push({
+        key: keyMatch[1],
+        lastModified: new Date(lastModifiedMatch ? lastModifiedMatch[1] : 0),
+      });
     }
     const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
     const tokenMatch = xml.match(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/);
     continuationToken = truncated && tokenMatch ? tokenMatch[1] : undefined;
   } while (continuationToken);
 
-  return keys;
+  return objects;
 }
