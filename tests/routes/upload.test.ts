@@ -166,9 +166,32 @@ describe("POST /api/upload", () => {
     const record = await kv.get(`file:${token}`, "json");
     expect(record.filename).toBe("my file #1.txt");
     expect(record.key.startsWith("f/")).toBe(true);
-    expect(record.key).toContain(encodeURIComponent("my file #1.txt"));
-    expect(record.key).not.toContain(" ");
-    expect(record.key).not.toContain("#");
+    // record.key must hold the raw filename, NOT a percent-encoded form —
+    // the cron cleanup compares record.key against B2 ListObjectsV2's <Key>
+    // entries, which report raw (decoded) keys. A percent-encoded
+    // record.key would never match and the cron would delete the live file.
+    expect(record.key).toContain("my file #1.txt");
+    expect(record.key).not.toContain(encodeURIComponent("my file #1.txt"));
+  });
+
+  it("stores the raw (unencoded) filename in record.key so it matches what B2's ListObjectsV2 reports, preventing the cron cleanup from treating live files with spaces/accents as orphaned", async () => {
+    const res = await uploadRoute.request(
+      "/api/upload",
+      {
+        method: "POST",
+        headers: { "Cf-Access-Authenticated-User-Email": "me@example.com" },
+        body: JSON.stringify({ filename: "città file.pdf", size: 10, expiresInDays: 7 }),
+      },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    const token = json.downloadUrl.split("/").pop();
+    const record = await kv.get(`file:${token}`, "json");
+    expect(record.filename).toBe("città file.pdf");
+    // Exact raw suffix match — no percent-encoding anywhere in the key.
+    expect(record.key.endsWith("/città file.pdf")).toBe(true);
+    expect(record.key).not.toContain("%");
   });
 
   it("stores a file record whose hash matches the returned password", async () => {

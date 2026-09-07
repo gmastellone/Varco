@@ -15,8 +15,11 @@ interface UploadRequestBody {
 // used to escape the `f/` prefix of the B2 object key (which would make the
 // object invisible to the cron cleanup's `prefix: "f/"` listing). Also
 // rejects empty or whitespace-only names. `#`/`?`, which could otherwise
-// truncate/reinterpret the key, are handled by the encodeURIComponent()
-// call in objectKey() below (defense in depth).
+// truncate/reinterpret the key when it's turned into a request URL, are
+// handled at that point: b2.ts's objectUrl() percent-encodes each path
+// segment before constructing the URL. The key stored here (and in KV) is
+// always the raw, unencoded filename so it matches what B2's ListObjectsV2
+// reports (raw UTF-8 keys), which is what the cron cleanup compares against.
 const UNSAFE_FILENAME_CHARS = /[/\\\x00-\x1f]/;
 
 function isValidFilename(filename: string): boolean {
@@ -42,11 +45,13 @@ function objectKey(fileId: string, filename: string): string {
   const now = new Date();
   const year = now.getUTCFullYear();
   const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-  // Defense in depth: even though isValidUploadBody already rejects path
-  // separators and control characters, encode the filename before it goes
-  // into the object key so a future validation gap can't produce a key
-  // outside the `f/` prefix.
-  return `f/${year}/${month}/${fileId}/${encodeURIComponent(filename)}`;
+  // The key stores the raw filename (not percent-encoded). isValidFilename
+  // already rejects `/`, `\`, and control characters, so the filename can't
+  // escape the `f/` prefix. Encoding for the wire happens in b2.ts's
+  // objectUrl(), not here — keeping record.key raw is what lets the cron
+  // cleanup's key comparison against B2's ListObjectsV2 output (which
+  // reports raw, undecoded keys) actually match.
+  return `f/${year}/${month}/${fileId}/${filename}`;
 }
 
 export const uploadRoute = new Hono<{ Bindings: Bindings }>();

@@ -61,6 +61,29 @@ describe("presignPutUrl", () => {
     const parsed = new URL(url);
     expect(parsed.searchParams.get("X-Amz-Expires")).toBe(String(6 * 3600));
   });
+
+  it("percent-encodes special characters within a path segment while preserving '/' as a literal separator", async () => {
+    const url = await presignPutUrl(config, "f/2026/09/abc/my file #1.txt", 3600);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/varco-test/f/2026/09/abc/my%20file%20%231.txt");
+    // '/' between segments must stay a real path separator, never %2F.
+    expect(parsed.pathname).not.toContain("%2F");
+    expect(parsed.pathname.split("/")).toEqual([
+      "",
+      "varco-test",
+      "f",
+      "2026",
+      "09",
+      "abc",
+      "my%20file%20%231.txt",
+    ]);
+  });
+
+  it("percent-encodes non-ASCII characters in a key segment", async () => {
+    const url = await presignPutUrl(config, "f/2026/09/abc/città file.pdf", 3600);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/varco-test/f/2026/09/abc/citt%C3%A0%20file.pdf");
+  });
 });
 
 describe("fetchObject / deleteObject / listObjects", () => {

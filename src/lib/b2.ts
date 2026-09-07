@@ -39,7 +39,20 @@ function client(config: B2Config): AwsClient {
 
 function objectUrl(config: B2Config, key: string): URL {
   const base = config.endpoint.replace(/\/+$/, "");
-  return new URL(`${base}/${config.bucket}/${key}`);
+  // Percent-encode each path segment independently so `/` is preserved as a
+  // literal path separator (never becomes %2F) while characters within a
+  // segment (spaces, non-ASCII, `#`, `?`, ...) are properly escaped. This is
+  // the only place a B2 object key gets encoded — record.key itself (as
+  // stored in KV) is always the raw, unencoded filename; encoding it before
+  // this point would make the wire-level `%XX` sequences pass through the
+  // URL constructor unchanged (it doesn't double-encode valid escapes),
+  // which caused stored keys to permanently diverge from the raw keys B2's
+  // ListObjectsV2 reports.
+  const encodedKey = key
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+  return new URL(`${base}/${config.bucket}/${encodedKey}`);
 }
 
 export async function presignPutUrl(
