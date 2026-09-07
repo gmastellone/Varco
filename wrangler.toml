@@ -18,7 +18,7 @@ workers_dev = false
 # Esempio: lega il Worker a un dominio custom che controlli (richiede che il
 # dominio/sottodominio sia già gestito come zona da Cloudflare).
 # [[routes]]
-# pattern = "varco.tuodominio.com/*"
+# pattern = "varco.tuodominio.com"
 # custom_domain = true
 
 [assets]
