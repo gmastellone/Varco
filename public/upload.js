@@ -16,6 +16,7 @@ export function buildShareText(downloadUrl, password) {
 
 function initUploadPage() {
   const dropzone = document.getElementById("dropzone");
+  const dzText = document.getElementById("dz-text");
   const fileInput = document.getElementById("file-input");
   const expiresInput = document.getElementById("expires-input");
   const maxDownloadsInput = document.getElementById("max-downloads-input");
@@ -39,7 +40,7 @@ function initUploadPage() {
 
   function selectFile(file) {
     selectedFile = file;
-    dropzone.textContent = `${file.name} (${formatBytes(file.size)})`;
+    dzText.textContent = `${file.name} (${formatBytes(file.size)})`;
     uploadButton.disabled = false;
   }
 
@@ -93,8 +94,13 @@ function initUploadPage() {
     };
 
     try {
-      const query = inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : "";
-      const prepareResponse = await fetch(`/api/upload${query}`, {
+      // The invite path is /api/upload/invite, kept outside Cloudflare
+      // Access entirely so guests never need an Access session — only the
+      // owner's /api/upload sits behind Access (see src/routes/upload.ts).
+      const endpoint = inviteToken
+        ? `/api/upload/invite?invite=${encodeURIComponent(inviteToken)}`
+        : "/api/upload";
+      const prepareResponse = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
