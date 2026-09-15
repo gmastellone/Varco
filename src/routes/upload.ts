@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Bindings } from "../types";
 import { generateToken, generateSalt, generatePassword, hashPassword } from "../lib/crypto";
 import { getInviteRecord, decrementInviteRemaining, putFileRecord, type FileRecord } from "../lib/kv";
@@ -71,7 +71,27 @@ function objectKey(fileId: string, filename: string): string {
 
 export const uploadRoute = new Hono<{ Bindings: Bindings }>();
 
-uploadRoute.post("/api/upload", async (c) => {
+// Registered on two paths sharing one handler:
+//
+// - /api/upload        — the fixed-user flow. Sits behind a Cloudflare
+//   Access "Allow" policy (owner only), which is what actually attaches
+//   Cf-Access-Authenticated-User-Email to the request.
+// - /api/upload/invite  — the invited-guest flow (?invite=<token>). Left
+//   completely outside any Cloudflare Access Application — not even a
+//   "Bypass" policy. Bypass was tried first and doesn't work for this:
+//   verified live that Access never attaches the identity header on a
+//   Bypass-protected path, even when the browser already holds a valid
+//   session for a sibling Application on the same Access app. Since a
+//   Bypass policy buys nothing here (the guest never has an identity to
+//   carry anyway), keeping this path outside Access entirely is simpler
+//   and behaves identically to the (broken) Bypass setup for guests, while
+//   letting /api/upload use "Allow" — the policy type that does carry the
+//   identity header, exactly as verified for /admin and /api/invite.
+//
+// The handler itself doesn't care which path was hit: it still checks for
+// the header first, then falls back to the invite token, so hitting either
+// path with either kind of credential works.
+const handleUpload = async (c: Context<{ Bindings: Bindings }>) => {
   const uploaderEmail = c.req.header("Cf-Access-Authenticated-User-Email");
   const inviteToken = c.req.query("invite");
 
@@ -128,4 +148,7 @@ uploadRoute.post("/api/upload", async (c) => {
     downloadUrl: `/d/${downloadToken}`,
     password,
   });
-});
+};
+
+uploadRoute.post("/api/upload", handleUpload);
+uploadRoute.post("/api/upload/invite", handleUpload);

@@ -94,8 +94,13 @@ function initUploadPage() {
     };
 
     try {
-      const query = inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : "";
-      const prepareResponse = await fetch(`/api/upload${query}`, {
+      // The invite path is /api/upload/invite, kept outside Cloudflare
+      // Access entirely so guests never need an Access session — only the
+      // owner's /api/upload sits behind Access (see src/routes/upload.ts).
+      const endpoint = inviteToken
+        ? `/api/upload/invite?invite=${encodeURIComponent(inviteToken)}`
+        : "/api/upload";
+      const prepareResponse = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -52,7 +52,7 @@ describe("POST /api/upload", () => {
 
   it("rejects an unknown invite token", async () => {
     const res = await uploadRoute.request(
-      "/api/upload?invite=nope",
+      "/api/upload/invite?invite=nope",
       { method: "POST", body: JSON.stringify({ filename: "a.txt", size: 10, expiresInDays: 7 }) },
       makeEnv(kv)
     );
@@ -70,7 +70,7 @@ describe("POST /api/upload", () => {
     await putInviteRecord(kv as unknown as KVNamespace, "inv1", invite, 3600);
 
     const res = await uploadRoute.request(
-      "/api/upload?invite=inv1",
+      "/api/upload/invite?invite=inv1",
       { method: "POST", body: JSON.stringify({ filename: "a.txt", size: 10, expiresInDays: 7 }) },
       makeEnv(kv)
     );
@@ -91,11 +91,32 @@ describe("POST /api/upload", () => {
     await putInviteRecord(kv as unknown as KVNamespace, "inv1", invite, 3600);
 
     const res = await uploadRoute.request(
-      "/api/upload?invite=inv1",
+      "/api/upload/invite?invite=inv1",
       { method: "POST", body: JSON.stringify({ filename: "a.txt", size: 10, expiresInDays: 7 }) },
       makeEnv(kv)
     );
     expect(res.status).toBe(403);
+  });
+
+  it("also accepts a valid invite token on /api/upload/invite with no auth header present", async () => {
+    // Confirms the guest-facing path works with only a token, matching how
+    // public/upload.js calls it and how it's meant to be reachable outside
+    // any Cloudflare Access application in production.
+    const invite: InviteRecord = {
+      label: "friend",
+      maxFiles: 1,
+      remainingFiles: 1,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3600_000,
+    };
+    await putInviteRecord(kv as unknown as KVNamespace, "inv1", invite, 3600);
+
+    const res = await uploadRoute.request(
+      "/api/upload/invite?invite=inv1",
+      { method: "POST", body: JSON.stringify({ filename: "a.txt", size: 10, expiresInDays: 7 }) },
+      makeEnv(kv)
+    );
+    expect(res.status).toBe(200);
   });
 
   it("rejects a malformed body", async () => {
