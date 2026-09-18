@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "./types";
 import { uploadRoute } from "./routes/upload";
+import { multipartRoute } from "./routes/multipart";
 import { downloadRoute } from "./routes/download";
 import { adminRoute } from "./routes/admin";
 import { cleanupOrphanedObjects } from "./lib/cleanup";
@@ -16,6 +17,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.route("/", uploadRoute);
+app.route("/", multipartRoute);
 app.route("/", downloadRoute);
 app.route("/", adminRoute);
 

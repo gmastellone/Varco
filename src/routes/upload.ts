@@ -1,73 +1,10 @@
 import { Hono, type Context } from "hono";
 import type { Bindings } from "../types";
 import { generateToken, generateSalt, generatePassword, hashPassword } from "../lib/crypto";
-import { getInviteRecord, decrementInviteRemaining, putFileRecord, type FileRecord } from "../lib/kv";
+import { decrementInviteRemaining, putFileRecord, type FileRecord } from "../lib/kv";
 import { presignPutUrl, b2ConfigFromEnv } from "../lib/b2";
-
-interface UploadRequestBody {
-  filename: string;
-  size: number;
-  expiresInDays: number;
-  maxDownloads?: number;
-}
-
-// Rejects path separators and control characters so a filename can never be
-// used to escape the `f/` prefix of the B2 object key (which would make the
-// object invisible to the cron cleanup's `prefix: "f/"` listing). Also
-// rejects empty or whitespace-only names. `#`/`?`, which could otherwise
-// truncate/reinterpret the key when it's turned into a request URL, are
-// handled at that point: b2.ts's objectUrl() percent-encodes each path
-// segment before constructing the URL. The key stored here (and in KV) is
-// always the raw, unencoded filename so it matches what B2's ListObjectsV2
-// reports (raw UTF-8 keys), which is what the cron cleanup compares against.
-const UNSAFE_FILENAME_CHARS = /[/\\\x00-\x1f]/;
-
-// A filename of exactly "." or ".." is otherwise indistinguishable from a
-// normal filename to UNSAFE_FILENAME_CHARS, but the WHATWG URL constructor
-// applies dot-segment path normalization when objectUrl() builds the
-// request URL: a trailing "/." segment collapses away, and a trailing "/.."
-// segment resolves UP a level to the shared f/<year>/<month>/ prefix — the
-// same prefix every other upload from that month lands under, regardless of
-// fileId. That lets two uploads named ".." collide (the second overwrites
-// the first in B2), and either case also breaks the record.key <->
-// listObjects() match the cron cleanup relies on. Reject both outright.
-const RESERVED_DOT_SEGMENTS = new Set([".", ".."]);
-
-function isValidFilename(filename: string): boolean {
-  return (
-    filename.trim().length > 0 &&
-    !UNSAFE_FILENAME_CHARS.test(filename) &&
-    !RESERVED_DOT_SEGMENTS.has(filename)
-  );
-}
-
-function isValidUploadBody(body: unknown): body is UploadRequestBody {
-  if (typeof body !== "object" || body === null) return false;
-  const b = body as Record<string, unknown>;
-  return (
-    typeof b.filename === "string" &&
-    b.filename.length > 0 &&
-    isValidFilename(b.filename) &&
-    typeof b.size === "number" &&
-    b.size > 0 &&
-    typeof b.expiresInDays === "number" &&
-    b.expiresInDays > 0 &&
-    (b.maxDownloads === undefined || typeof b.maxDownloads === "number")
-  );
-}
-
-function objectKey(fileId: string, filename: string): string {
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-  // The key stores the raw filename (not percent-encoded). isValidFilename
-  // already rejects `/`, `\`, and control characters, so the filename can't
-  // escape the `f/` prefix. Encoding for the wire happens in b2.ts's
-  // objectUrl(), not here — keeping record.key raw is what lets the cron
-  // cleanup's key comparison against B2's ListObjectsV2 output (which
-  // reports raw, undecoded keys) actually match.
-  return `f/${year}/${month}/${fileId}/${filename}`;
-}
+import { isValidUploadBody, objectKey } from "../lib/uploadMeta";
+import { resolveUploadAuth } from "../lib/uploadAuth";
 
 export const uploadRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -76,34 +13,34 @@ export const uploadRoute = new Hono<{ Bindings: Bindings }>();
 // - /api/upload        — the fixed-user flow. Sits behind a Cloudflare
 //   Access "Allow" policy (owner only), which is what actually attaches
 //   Cf-Access-Authenticated-User-Email to the request.
-// - /api/upload/invite  — the invited-guest flow (?invite=<token>). Left
-//   completely outside any Cloudflare Access Application — not even a
-//   "Bypass" policy. Bypass was tried first and doesn't work for this:
-//   verified live that Access never attaches the identity header on a
-//   Bypass-protected path, even when the browser already holds a valid
-//   session for a sibling Application on the same Access app. Since a
-//   Bypass policy buys nothing here (the guest never has an identity to
-//   carry anyway), keeping this path outside Access entirely is simpler
-//   and behaves identically to the (broken) Bypass setup for guests, while
-//   letting /api/upload use "Allow" — the policy type that does carry the
-//   identity header, exactly as verified for /admin and /api/invite.
+// - /api/guest-upload  — the invited-guest flow (?invite=<token>). Left
+//   completely outside any Cloudflare Access Application.
+//
+// These deliberately do NOT share a path prefix (unlike an earlier
+// /api/upload vs /api/upload/invite split). Verified live that a
+// Cloudflare Access destination configured as an "exact" path (no trailing
+// "*") still matches as a PREFIX — "api/upload" protects "/api/upload" AND
+// everything nested under it, e.g. "/api/upload/invite". There is no way to
+// declare a truly exact, non-prefix destination in Access, so the only way
+// to keep a route outside Access is to give it a path that isn't a
+// descendant of any Access-protected one at all.
+//
+// (Earlier still, a Bypass policy was tried for the guest path instead of
+// keeping it outside Access — that doesn't work either: Bypass never
+// attaches the identity header, which doesn't matter for guests, but a
+// Bypass destination is still subject to the same prefix-matching
+// footgun, and more importantly a Bypass policy for a *narrower* path can
+// still be shadowed by an Allow policy's *broader* prefix elsewhere in the
+// same zone. Staying outside Access's path space entirely is the only
+// mechanism that doesn't depend on getting evaluation order right.)
 //
 // The handler itself doesn't care which path was hit: it still checks for
 // the header first, then falls back to the invite token, so hitting either
 // path with either kind of credential works.
 const handleUpload = async (c: Context<{ Bindings: Bindings }>) => {
-  const uploaderEmail = c.req.header("Cf-Access-Authenticated-User-Email");
-  const inviteToken = c.req.query("invite");
-
-  let invite: Awaited<ReturnType<typeof getInviteRecord>> = null;
-  if (!uploaderEmail) {
-    if (!inviteToken) {
-      return c.json({ error: "unauthorized" }, 403);
-    }
-    invite = await getInviteRecord(c.env.FILES_KV, inviteToken);
-    if (!invite || invite.remainingFiles <= 0) {
-      return c.json({ error: "unauthorized" }, 403);
-    }
+  const auth = await resolveUploadAuth(c);
+  if (!auth) {
+    return c.json({ error: "unauthorized" }, 403);
   }
 
   const body = await c.req.json().catch(() => null);
@@ -111,8 +48,8 @@ const handleUpload = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ error: "invalid request" }, 400);
   }
 
-  if (invite && inviteToken) {
-    await decrementInviteRemaining(c.env.FILES_KV, inviteToken, invite);
+  if (auth.kind === "invite") {
+    await decrementInviteRemaining(c.env.FILES_KV, auth.token, auth.invite);
   }
 
   const fileId = generateToken();
@@ -130,8 +67,8 @@ const handleUpload = async (c: Context<{ Bindings: Bindings }>) => {
     key,
     filename: body.filename,
     size: body.size,
-    ...(uploaderEmail ? { uploaderEmail } : {}),
-    ...(inviteToken ? { inviteToken } : {}),
+    ...(auth.kind === "owner" ? { uploaderEmail: auth.email } : {}),
+    ...(auth.kind === "invite" ? { inviteToken: auth.token } : {}),
     hash,
     salt,
     expiresAt,
@@ -151,4 +88,4 @@ const handleUpload = async (c: Context<{ Bindings: Bindings }>) => {
 };
 
 uploadRoute.post("/api/upload", handleUpload);
-uploadRoute.post("/api/upload/invite", handleUpload);
+uploadRoute.post("/api/guest-upload", handleUpload);

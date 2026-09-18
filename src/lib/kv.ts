@@ -20,6 +20,28 @@ export interface InviteRecord {
   expiresAt: number;
 }
 
+// Bookkeeping for an in-progress multipart upload, keyed by an opaque token
+// handed to the client at /api/upload/multipart/init time. Holds the upload
+// metadata (filename, size, expiry, who's uploading) so later calls
+// (part-url, complete) never have to re-trust anything the client resends —
+// they just look it up here by token. TTL'd generously (see
+// PENDING_UPLOAD_TTL_SECONDS in the multipart route) so a stalled transfer
+// can be resumed the next day without losing its metadata.
+export interface PendingUpload {
+  fileId: string;
+  key: string;
+  uploadId: string;
+  filename: string;
+  size: number;
+  partSize: number;
+  partCount: number;
+  expiresInDays: number;
+  maxDownloads?: number;
+  uploaderEmail?: string;
+  inviteToken?: string;
+  createdAt: number;
+}
+
 const MIN_KV_TTL_SECONDS = 60;
 
 function fileKvKey(token: string): string {
@@ -32,6 +54,10 @@ function inviteKvKey(token: string): string {
 
 function failKvKey(token: string): string {
   return `fail:${token}`;
+}
+
+function pendingUploadKvKey(token: string): string {
+  return `pending:${token}`;
 }
 
 function ttlFromExpiresAt(expiresAt: number): number {
@@ -105,6 +131,25 @@ export async function incrementFailCount(kv: KVNamespace, token: string): Promis
 
 export async function resetFailCount(kv: KVNamespace, token: string): Promise<void> {
   await kv.delete(failKvKey(token));
+}
+
+export async function getPendingUpload(kv: KVNamespace, token: string): Promise<PendingUpload | null> {
+  return kv.get<PendingUpload>(pendingUploadKvKey(token), "json");
+}
+
+export async function putPendingUpload(
+  kv: KVNamespace,
+  token: string,
+  record: PendingUpload,
+  expirationTtl: number
+): Promise<void> {
+  await kv.put(pendingUploadKvKey(token), JSON.stringify(record), {
+    expirationTtl: Math.max(expirationTtl, MIN_KV_TTL_SECONDS),
+  });
+}
+
+export async function deletePendingUpload(kv: KVNamespace, token: string): Promise<void> {
+  await kv.delete(pendingUploadKvKey(token));
 }
 
 export async function listAllFileRecords(kv: KVNamespace): Promise<FileRecord[]> {
