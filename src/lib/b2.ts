@@ -82,6 +82,125 @@ export async function deleteObject(config: B2Config, key: string): Promise<void>
   }
 }
 
+export async function createMultipartUpload(config: B2Config, key: string): Promise<string> {
+  const url = objectUrl(config, key);
+  url.searchParams.set("uploads", "");
+  const response = await client(config).fetch(url.toString(), { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`B2 createMultipartUpload failed for ${key}: ${response.status}`);
+  }
+  const xml = await response.text();
+  const match = xml.match(/<UploadId>([^<]*)<\/UploadId>/);
+  if (!match) {
+    throw new Error(`B2 createMultipartUpload response missing UploadId for ${key}`);
+  }
+  return match[1];
+}
+
+export async function presignUploadPartUrl(
+  config: B2Config,
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  expiresInSeconds: number = DEFAULT_PUT_EXPIRES_SECONDS
+): Promise<string> {
+  const url = objectUrl(config, key);
+  url.searchParams.set("partNumber", String(partNumber));
+  url.searchParams.set("uploadId", uploadId);
+  url.searchParams.set("X-Amz-Expires", String(expiresInSeconds));
+  const signed = await client(config).sign(url.toString(), {
+    method: "PUT",
+    aws: { signQuery: true },
+  });
+  return signed.url;
+}
+
+export interface MultipartPart {
+  partNumber: number;
+  eTag: string;
+}
+
+export async function completeMultipartUpload(
+  config: B2Config,
+  key: string,
+  uploadId: string,
+  parts: MultipartPart[]
+): Promise<void> {
+  const url = objectUrl(config, key);
+  url.searchParams.set("uploadId", uploadId);
+  const body =
+    "<CompleteMultipartUpload>" +
+    parts
+      .slice()
+      .sort((a, b) => a.partNumber - b.partNumber)
+      .map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.eTag}</ETag></Part>`)
+      .join("") +
+    "</CompleteMultipartUpload>";
+  const response = await client(config).fetch(url.toString(), { method: "POST", body });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`B2 completeMultipartUpload failed for ${key}: ${response.status} ${text}`);
+  }
+}
+
+export async function abortMultipartUpload(config: B2Config, key: string, uploadId: string): Promise<void> {
+  const url = objectUrl(config, key);
+  url.searchParams.set("uploadId", uploadId);
+  const response = await client(config).fetch(url.toString(), { method: "DELETE" });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`B2 abortMultipartUpload failed for ${key}: ${response.status}`);
+  }
+}
+
+export interface UploadedPart {
+  partNumber: number;
+  eTag: string;
+  size: number;
+}
+
+// Used to resume an interrupted multipart upload (e.g. the next day): asks
+// B2 which parts it actually has on record for this uploadId, rather than
+// trusting the client's local state, since the browser's own bookkeeping
+// (localStorage) could be stale or lost entirely (cleared, different
+// device) without the upload itself having gone away on B2's side.
+export async function listUploadedParts(
+  config: B2Config,
+  key: string,
+  uploadId: string
+): Promise<UploadedPart[]> {
+  const parts: UploadedPart[] = [];
+  let partNumberMarker: string | undefined;
+
+  do {
+    const url = objectUrl(config, key);
+    url.searchParams.set("uploadId", uploadId);
+    if (partNumberMarker) url.searchParams.set("part-number-marker", partNumberMarker);
+
+    const response = await client(config).fetch(url.toString(), { method: "GET" });
+    if (!response.ok) {
+      throw new Error(`B2 listUploadedParts failed for ${key}: ${response.status}`);
+    }
+    const xml = await response.text();
+    for (const match of xml.matchAll(/<Part>([\s\S]*?)<\/Part>/g)) {
+      const block = match[1];
+      const partNumberMatch = block.match(/<PartNumber>([^<]*)<\/PartNumber>/);
+      const eTagMatch = block.match(/<ETag>([^<]*)<\/ETag>/);
+      const sizeMatch = block.match(/<Size>([^<]*)<\/Size>/);
+      if (!partNumberMatch || !eTagMatch) continue;
+      parts.push({
+        partNumber: parseInt(partNumberMatch[1], 10),
+        eTag: eTagMatch[1],
+        size: sizeMatch ? parseInt(sizeMatch[1], 10) : 0,
+      });
+    }
+    const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+    const markerMatch = xml.match(/<NextPartNumberMarker>([^<]*)<\/NextPartNumberMarker>/);
+    partNumberMarker = truncated && markerMatch ? markerMatch[1] : undefined;
+  } while (partNumberMarker);
+
+  return parts;
+}
+
 export interface B2ObjectInfo {
   key: string;
   lastModified: Date;

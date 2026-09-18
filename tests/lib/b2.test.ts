@@ -5,6 +5,11 @@ import {
   deleteObject,
   listObjects,
   b2ConfigFromEnv,
+  createMultipartUpload,
+  presignUploadPartUrl,
+  completeMultipartUpload,
+  abortMultipartUpload,
+  listUploadedParts,
   type B2Config,
 } from "../../src/lib/b2";
 import type { Bindings } from "../../src/types";
@@ -181,5 +186,122 @@ describe("fetchObject / deleteObject / listObjects", () => {
     const newer = objects.find((o) => o.key === "f/newer.bin");
     expect(older?.lastModified).toEqual(new Date("2020-05-05T05:05:05.000Z"));
     expect(newer?.lastModified).toEqual(new Date("2026-09-07T09:00:00.000Z"));
+  });
+});
+
+describe("multipart upload", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("createMultipartUpload posts ?uploads and extracts the UploadId", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = input instanceof Request ? input : new Request(input, init);
+        expect(req.method).toBe("POST");
+        expect(requestUrl(input)).toContain("/varco-test/f/2026/09/abc/big.zip");
+        expect(requestUrl(input)).toContain("uploads=");
+        return new Response(
+          '<?xml version="1.0"?><InitiateMultipartUploadResult><UploadId>up-123</UploadId></InitiateMultipartUploadResult>',
+          { status: 200 }
+        );
+      })
+    );
+
+    const uploadId = await createMultipartUpload(config, "f/2026/09/abc/big.zip");
+    expect(uploadId).toBe("up-123");
+  });
+
+  it("createMultipartUpload throws when the response has no UploadId", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<Error/>", { status: 200 })));
+    await expect(createMultipartUpload(config, "f/2026/09/abc/big.zip")).rejects.toThrow();
+  });
+
+  it("presignUploadPartUrl produces a query-signed PUT URL scoped to the part and uploadId", async () => {
+    const url = await presignUploadPartUrl(config, "f/2026/09/abc/big.zip", "up-123", 4, 3600);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/varco-test/f/2026/09/abc/big.zip");
+    expect(parsed.searchParams.get("partNumber")).toBe("4");
+    expect(parsed.searchParams.get("uploadId")).toBe("up-123");
+    expect(parsed.searchParams.get("X-Amz-Expires")).toBe("3600");
+    expect(parsed.searchParams.has("X-Amz-Signature")).toBe(true);
+  });
+
+  it("completeMultipartUpload sends parts sorted by partNumber regardless of input order", async () => {
+    let sentBody = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = input instanceof Request ? input : new Request(input, init);
+        expect(req.method).toBe("POST");
+        sentBody = input instanceof Request ? await input.clone().text() : String(init?.body ?? "");
+        return new Response("<CompleteMultipartUploadResult/>", { status: 200 });
+      })
+    );
+
+    await completeMultipartUpload(config, "f/2026/09/abc/big.zip", "up-123", [
+      { partNumber: 2, eTag: '"etag2"' },
+      { partNumber: 1, eTag: '"etag1"' },
+    ]);
+
+    const part1Index = sentBody.indexOf("<PartNumber>1</PartNumber>");
+    const part2Index = sentBody.indexOf("<PartNumber>2</PartNumber>");
+    expect(part1Index).toBeGreaterThanOrEqual(0);
+    expect(part2Index).toBeGreaterThan(part1Index);
+    expect(sentBody).toContain('<ETag>"etag1"</ETag>');
+  });
+
+  it("completeMultipartUpload throws on a non-2xx response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<Error/>", { status: 500 })));
+    await expect(
+      completeMultipartUpload(config, "f/2026/09/abc/big.zip", "up-123", [{ partNumber: 1, eTag: '"x"' }])
+    ).rejects.toThrow();
+  });
+
+  it("abortMultipartUpload resolves without throwing on a 2xx or 404 response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    await expect(abortMultipartUpload(config, "f/2026/09/abc/big.zip", "up-123")).resolves.toBeUndefined();
+  });
+
+  it("abortMultipartUpload throws on a non-2xx, non-404 response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 500 })));
+    await expect(abortMultipartUpload(config, "f/2026/09/abc/big.zip", "up-123")).rejects.toThrow();
+  });
+
+  it("listUploadedParts parses PartNumber/ETag/Size from a single-page response", async () => {
+    const xml =
+      '<?xml version="1.0"?><ListPartsResult><IsTruncated>false</IsTruncated>' +
+      "<Part><PartNumber>1</PartNumber><ETag>\"e1\"</ETag><Size>1048576</Size></Part>" +
+      "<Part><PartNumber>2</PartNumber><ETag>\"e2\"</ETag><Size>2048</Size></Part></ListPartsResult>";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(xml, { status: 200 })));
+
+    const parts = await listUploadedParts(config, "f/2026/09/abc/big.zip", "up-123");
+    expect(parts).toEqual([
+      { partNumber: 1, eTag: '"e1"', size: 1048576 },
+      { partNumber: 2, eTag: '"e2"', size: 2048 },
+    ]);
+  });
+
+  it("listUploadedParts follows pagination via the part-number-marker", async () => {
+    const page1 =
+      '<?xml version="1.0"?><ListPartsResult><IsTruncated>true</IsTruncated>' +
+      "<NextPartNumberMarker>1</NextPartNumberMarker>" +
+      '<Part><PartNumber>1</PartNumber><ETag>"e1"</ETag><Size>10</Size></Part></ListPartsResult>';
+    const page2 =
+      '<?xml version="1.0"?><ListPartsResult><IsTruncated>false</IsTruncated>' +
+      '<Part><PartNumber>2</PartNumber><ETag>"e2"</ETag><Size>20</Size></Part></ListPartsResult>';
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        call += 1;
+        return new Response(call === 1 ? page1 : page2, { status: 200 });
+      })
+    );
+
+    const parts = await listUploadedParts(config, "f/2026/09/abc/big.zip", "up-123");
+    expect(parts.map((p) => p.partNumber)).toEqual([1, 2]);
+    expect(call).toBe(2);
   });
 });
